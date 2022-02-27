@@ -48,6 +48,7 @@ buildUI wenv model = widgetTree where
           labeledRadio "Regular " "Regular" fontName,
           filler
         ],
+
         hstack [
           labeledRadio "Medium " "Medium" fontName,
           filler
@@ -75,6 +76,7 @@ buildUI wenv model = widgetTree where
         `styleBasic` [paddingB 10],
 
       sampleTextLabel
+      
     ] `styleBasic` [padding 10]
 
   titleText text = label text

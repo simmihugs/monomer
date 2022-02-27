@@ -121,6 +121,12 @@ class CmbAcceptTab t where
   acceptTab = acceptTab_ True
   acceptTab_ :: Bool -> t
 
+-- | Whether a widget shows LineNumbers.
+class CmbShowLineNumbers t where
+  showLineNumbers :: t
+  showLineNumbers = showLineNumbers_ True
+  showLineNumbers_ :: Bool -> t
+
 -- | Whether a text based widget is multiline.
 class CmbMultiline t where
   multiline :: t

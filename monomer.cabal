@@ -403,6 +403,7 @@ executable tutorial
       Tutorial06_Composite
       Tutorial07_CustomWidget
       Tutorial08_Themes
+      Tutorial09_TextArea
       Paths_monomer
   hs-source-dirs:
       examples/tutorial

@@ -27,12 +27,13 @@ module Monomer.Widgets.Singles.TextArea (
 ) where
 
 import Control.Applicative ((<|>))
-import Control.Lens ((&), (^.), (^?), (.~), (%~), (<>~), ALens', ix, view)
+import Control.Lens (_Just, (&), (^.), (^?), (+~), (.~), (%~), (<>~), ALens', ix, view)
 import Control.Monad (forM_, when)
 import Data.Default
 import Data.Foldable (toList)
 import Data.Maybe
-import Data.Sequence (Seq(..), (|>))
+import Data.Sequence (Seq(..), (|>), )
+
 import Data.Tuple (swap)
 import Data.Text (Text)
 import GHC.Generics
@@ -73,6 +74,7 @@ data TextAreaCfg s e = TextAreaCfg {
   _tacMaxLength :: Maybe Int,
   _tacMaxLines :: Maybe Int,
   _tacAcceptTab :: Maybe Bool,
+  _tacShowLineNumbers :: Maybe Bool,
   _tacSelectOnFocus :: Maybe Bool,
   _tacOnFocusReq :: [Path -> WidgetRequest s e],
   _tacOnBlurReq :: [Path -> WidgetRequest s e],
@@ -86,6 +88,7 @@ instance Default (TextAreaCfg s e) where
     _tacMaxLength = Nothing,
     _tacMaxLines = Nothing,
     _tacAcceptTab = Nothing,
+    _tacShowLineNumbers = Nothing,
     _tacSelectOnFocus = Nothing,
     _tacOnFocusReq = [],
     _tacOnBlurReq = [],
@@ -99,6 +102,7 @@ instance Semigroup (TextAreaCfg s e) where
     _tacMaxLength = _tacMaxLength t2 <|> _tacMaxLength t1,
     _tacMaxLines = _tacMaxLines t2 <|> _tacMaxLines t1,
     _tacAcceptTab = _tacAcceptTab t2 <|> _tacAcceptTab t1,
+    _tacShowLineNumbers = _tacShowLineNumbers t2 <|> _tacShowLineNumbers t1,
     _tacSelectOnFocus = _tacSelectOnFocus t2 <|> _tacSelectOnFocus t1,
     _tacOnFocusReq = _tacOnFocusReq t1 <> _tacOnFocusReq t2,
     _tacOnBlurReq = _tacOnBlurReq t1 <> _tacOnBlurReq t2,
@@ -131,6 +135,11 @@ instance CmbMaxLines (TextAreaCfg s e) where
 instance CmbAcceptTab (TextAreaCfg s e) where
   acceptTab_ accept = def {
     _tacAcceptTab = Just accept
+  }
+
+instance CmbShowLineNumbers (TextAreaCfg s e) where
+  showLineNumbers_ accept = def {
+    _tacShowLineNumbers = Just accept
   }
 
 instance CmbSelectOnFocus (TextAreaCfg s e) where
@@ -452,7 +461,7 @@ makeTextArea !wdata !config !state = widget where
   handleEvent wenv node target evt = case evt of
     ButtonAction point btn BtnPressed clicks
       | clicks == 1 -> Just result where
-        newPos = findClosestGlyphPos state (localPoint point)
+        newPos = (\(x,y) -> (if x-5<0 then 0 else x-5,y)) $ findClosestGlyphPos state (localPoint point)
         newState = state {
           _tasCursorPos = newPos,
           _tasSelStart = Nothing
@@ -464,6 +473,7 @@ makeTextArea !wdata !config !state = widget where
     -- Select word if clicked twice in a row
     ButtonAction point btn BtnReleased clicks
       | clicks == 2 -> result where
+        -- (tx, ty) = (\(x,y) -> (if x-5<0 then 0 else x-5,y)) $ findClosestGlyphPos state (localPoint point)
         (tx, ty) = findClosestGlyphPos state (localPoint point)
         currText = Seq.index textLines ty ^. L.text
         (part1, part2) = T.splitAt tx currText
@@ -487,6 +497,7 @@ makeTextArea !wdata !config !state = widget where
     -- Select line if clicked three times in a row
     ButtonAction point btn BtnReleased clicks
       | clicks == 3 -> result where
+        -- (tx, ty) = (\(x,y) -> (if x-5<0 then 0 else x-5,y)) $ findClosestGlyphPos state (localPoint point)
         (tx, ty) = findClosestGlyphPos state (localPoint point)
         glyphs = Seq.index textLines ty ^. L.glyphs
         newPos = (0, ty)
@@ -521,7 +532,8 @@ makeTextArea !wdata !config !state = widget where
       | isNodePressed wenv node -> Just result where
         curPos = _tasCursorPos state
         selStart = _tasSelStart state
-        newPos = findClosestGlyphPos state (localPoint point)
+        --newPos = findClosestGlyphPos state (localPoint point)
+        newPos = (\(x,y) -> (if x-5<0 then 0 else x-5,y)) $ findClosestGlyphPos state (localPoint point)
         newSel = selStart <|> Just curPos
         newState = state {
           _tasCursorPos = newPos,
@@ -655,29 +667,98 @@ makeTextArea !wdata !config !state = widget where
       | rectInRect caretRect (wenv ^. L.viewport) || isNothing scWid = []
       | otherwise = [SendMessage (fromJust scWid) scrollMsg]
 
+  lineNumberWidth :: Double
+  -- lineNumberWidth = do
+  --   let showLineNumbers = fromMaybe False (_tacShowLineNumbers config)
+  --   if showLineNumbers
+  --     then charWidth * fromIntegral (length $ show totalLines)
+  --     else 0
+  --   where
+  --     charWidth = case _txsFontSize textStyle of
+  --                   Nothing -> unFontSize def
+  --                   Just fs -> unFontSize fs
+  --     textStyle = fromMaybe def (_tasTextStyle state)
+  lineNumberWidth = lineNumberWidth' totalLines 0
+    where
+      lineNumberWidth' x acc
+        | x < 10    = acc+30
+        | otherwise = lineNumberWidth' (x `div` 10) (acc+10)
+
+      
+  textLinesToLinenumbers :: Seq TextLine -> Seq TextLine
+  textLinesToLinenumbers Seq.Empty  = Seq.Empty 
+  textLinesToLinenumbers textLines' = do
+    -- If the textLine == Empty
+    -- --> textLine ^. L.rect . L.rH /= someOtherTextLine ^. L.rect . L.rH
+    let (Rect _ _ _ rH') = (textLines' `Seq.index` 0) ^. L.rect 
+
+    Seq.mapWithIndex (\x t -> textLineToLinenumber' t x rH') textLines'
+      where
+        textLineToLinenumber' textLine' index' rH' =
+          textLine'
+          & L.text .~ T.pack (show index')
+          & L.rect %~ (\x -> x { _rH = rH'})
+
   getSizeReq wenv node = sizeReq where
     Size w h = getTextLinesSize textLines
     {- getTextLines does not return the vertical spacing for the last line, but
     we need it since the selection rect displays it. -}
     spaceV = getSpaceV textLines
-    sizeReq = (minWidth (max 100 w), minHeight (max 20 (h + spaceV)))
+    sizeReq = (minWidth (max 100 $ w + lineNumberWidth), minHeight (max 20 (h + spaceV)))
 
-  render wenv node renderer =
-    drawInTranslation renderer offset $ do
+  render wenv node renderer = do
+    -- Restrict drawing to keep the line number section free
+    let textLinesRect = wenv ^. L.viewport & L.x +~ lineNumberWidth
+    -- Add x offset to the text lines, otherwise the beginning of each line would not be visible
+    let textLinesOffset = Point lineNumberWidth 0
+    -- Restrict the line numbers to the width you assigned
+    let lineNumbersRect = wenv ^. L.viewport & L.w .~ lineNumberWidth
+
+    drawInScissor renderer True textLinesRect $
+      drawInTranslation renderer offset $ do
       when selRequired $
         forM_ selRects $ \rect ->
           when (rect ^. L.w > 0) $
             drawRect renderer rect (Just selColor) Nothing
 
-      forM_ textLines (drawTextLine renderer style)
+      --forM_ textLines (drawTextLine renderer style)
+      mapM_ drawTextLine' indexedTextLines
 
       when caretRequired $
         drawRect renderer caretRect (Just caretColor) Nothing
+
+    drawInScissor renderer True lineNumbersRect $ do
+      mapM_ f [1..length textLines]
+      -- drawTextLine renderer (style { _sstText = Just $ def { _txsUnderline = Just True }}) (textLine (T.pack (show tpX)) 30)
+
     where
+      indexedTextLines :: Seq (Int, TextLine)
+      indexedTextLines = Seq.zip (Seq.fromList [0..Seq.length textLines]) textLines
+
+      drawTextLine' :: (Int,TextLine) -> IO ()
+      drawTextLine' (index',textLine') = if index' == tpY
+                                       then drawTextLine renderer (style { _sstText = Just $ def { _txsUnderline = Just True }}) textLine'
+                                       else drawTextLine renderer style textLine'
+      (tpX, tpY) = _tasCursorPos state
+      f y =  drawTextLine renderer (otherStyle y) $ (\x -> textLine (T.pack $ show x) (fromIntegral $ 7+x*20)) y
+      otherStyle y = if pred y == tpY
+                     then style { _sstBgColor = Just $ rgbHex "#ffffff", _sstText = Just $ def { _txsFontColor = Just $ rgbHex "#ff2200" } }
+                     else style { _sstBgColor = Just $ rgbHex "#ffffff", _sstText = Just $ def { _txsFontColor = Just $ rgbHex "#000000" } }
+
+      textLine t y = def
+                 & L.text .~ t
+                 & L.rect .~ Rect (wenv ^. L.viewport . L.x + 5) y 20 20
+                 & L.fontSize .~ fontSize
+                 & L.font .~ font
+
+      font = fromMaybe def (style ^? L.text . _Just  . L.font . _Just)
+      fontSize = fromMaybe def (style ^? L.text . _Just . L.fontSize . _Just)
+
       style = currentStyle wenv node
       contentArea = getContentArea node style
       ts = _weTimestamp wenv
-      offset = Point (contentArea ^. L.x) (contentArea ^. L.y)
+      offset = Point (contentArea ^. L.x + lineNumberWidth) (contentArea ^. L.y)
+      offset' = Point (contentArea ^. L.x) (contentArea ^. L.y)
       focused = isNodeFocused wenv node
 
       caretTs = ts - _tasFocusStart state
